@@ -5,7 +5,7 @@ import requests
 import xlsxwriter
 from deep_translator import GoogleTranslator
 from itertools import chain
-
+from concurrent.futures import ThreadPoolExecutor
 
 
 TABLE_HEAD = [
@@ -19,11 +19,11 @@ TABLE_HEAD = [
 ]
 
 
-st_accept = "text/html" # говорим веб-серверу, 
-                        # что хотим получить html
-# имитируем подключение через браузер Mozilla на macOS
+st_accept = "text/html" 
+                        
+
 st_useragent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15"
-# формируем хеш заголовков
+
 headers = {
    "Accept": st_accept,
    "User-Agent": st_useragent
@@ -31,39 +31,38 @@ headers = {
 
 
 
-def find(s, ch): # находит все индексы элемента строки
+def find(s, ch): 
     return [i for i, ltr in enumerate(s) if (ltr == ch and i != 0)]
 
 def insert_newlines(s, indices):
-    # Сортируем индексы в обратном порядке, чтобы вставка не влияла на последующие индексы
+
     for index in sorted(indices, reverse=True):
         s = s[:index] + '\n' + s[index:]
     return s
 
 
 def split_string_by_indices(s, indices):
-    # Добавляем начальный и конечный индексы для удобства
+
     indices = sorted(indices)
     result = []
     start = 0
 
     for index in indices:
-        # Добавляем подстроку от start до index
+
         result.append(s[start:index])
         start = index
 
-    # Добавляем оставшуюся часть строки
+
     result.append(s[start:])
 
     return result
 
 
 
-try:
-    files = glob.glob("*Oval*")
-except:
-    print("Files not found")
-    exit(1)
+
+files = glob.glob("*Oval*")
+print(files)
+
 
 for file in files:
 
@@ -72,19 +71,17 @@ for file in files:
     rowT = 0
     colT = 0
     rowCapec = 0
+    rowBDU = 0
 
 
     cwe_cache = {}
+    bdu_cache = []
 
-    try:
+    workbook = xlsxwriter.Workbook('ParserResult.xlsx')
+    worksheet = workbook.add_worksheet("MAIN_TABLE")
+    worksheet_bdu = workbook.add_worksheet("BDU_DESC")
+    worksheet_capec = workbook.add_worksheet("CAPEC_DESC")
 
-        workbook = xlsxwriter.Workbook('ParserResult.xlsx')
-        worksheet = workbook.add_worksheet("MAIN_TABLE")
-        worksheet_bdu = workbook.add_worksheet("BDU_DESC")
-        worksheet_capec = workbook.add_worksheet("CAPEC_DESC")
-    except:
-        print("Cannot open Excel file")
-        exit(1)
 
     for k, word in enumerate(TABLE_HEAD):
         worksheet.write(rowT, colT + k, word)
@@ -115,46 +112,46 @@ for file in files:
 
             capec_low, capec_medium, capec_high, capec_no_chance = [], [], [], []
 
-
-            worksheet.write(rowT, TABLE_HEAD.index("№"), c)
-            worksheet.write(rowT, TABLE_HEAD.index("BDU"), i)
-
-            
-
             response = requests.get("https://service.securitm.ru/vm/vulnerability/fstec/show/" + i)
             soup = BeautifulSoup(response.text, 'html.parser')
 
             bdu_desc = soup.find('div', class_='text-justify mb-2').text
 
-            worksheet_bdu.write(rowT, 0, rowT)
-            worksheet_bdu.write(rowT, 1, i)
-            worksheet_bdu.write(rowT, 2, bdu_desc)
+            if i not in bdu_cache:
+                worksheet_bdu.write(rowBDU, 0, rowT)
+                worksheet_bdu.write(rowBDU, 1, i)
+                worksheet_bdu.write(rowBDU, 2, bdu_desc)
+                bdu_cache.append(i)
+                rowBDU += 1
+            
 
 
             card_body = soup.find('div', class_='card-body border-top-0')
 
-            # Если блок найден, ищем таблицу
+            
             if card_body:
                 table = card_body.find('table', class_='table table-sm table-striped table-bordered')
 
-                # Если таблица найдена, извлекаем данные
+                
                 if table:
                     cwe_list = []
-                    rows = table.find_all('tr')  # Находим все строки таблицы
+                    rows = table.find_all('tr')  
 
                     for row in rows:
-                        cells = row.find_all('td')  # Находим все ячейки в строке
-                        if len(cells) == 2:  # Проверяем, что строка содержит две ячейки
-                            cwe_id = cells[0].text.strip()  # Идентификатор CWE
+                        cells = row.find_all('td')  
+                        if len(cells) == 2:  
+                            cwe_id = cells[0].text.strip() 
 
                             cwe_list.append(cwe_id)
 
 
 
-                    worksheet.write(rowT, TABLE_HEAD.index("CWE"), ",".join(cwe_list))
-                                        # Выводим результат
-                    for cwe in cwe_list:
-                        
+
+                                        
+                    for cwe in cwe_list: 
+                        worksheet.write(rowT, TABLE_HEAD.index("№"), c)
+                        worksheet.write(rowT, TABLE_HEAD.index("BDU"), i)
+                        worksheet.write(rowT, TABLE_HEAD.index("CWE"), cwe)
                         if cwe not in cwe_cache:
                             print(f"{cwe} is not cached.", end=" ", flush=True)
                             cwe_cache[cwe] = {}
@@ -201,22 +198,18 @@ for file in files:
                                         else:
                                             cwe_cache[cwe]["capec_no_chance"].append(a.text)
 
+                        
 
-                    worksheet.write(rowT, TABLE_HEAD.index("CAPEC High"), ", ".join(cwe_cache[cwe]["capec_high"]))
-                    worksheet.write(rowT, TABLE_HEAD.index("CAPEC Medium"), ", ".join(cwe_cache[cwe]["capec_medium"]))
-                    worksheet.write(rowT, TABLE_HEAD.index("CAPEC Low"), ", ".join(cwe_cache[cwe]["capec_low"]))
-                    worksheet.write(rowT, TABLE_HEAD.index("No chance"), ", ".join(cwe_cache[cwe]["capec_no_chance"]))
+                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC High"), ", ".join(cwe_cache[cwe]["capec_high"]))
+                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC Medium"), ", ".join(cwe_cache[cwe]["capec_medium"]))
+                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC Low"), ", ".join(cwe_cache[cwe]["capec_low"]))
+                        worksheet.write(rowT, TABLE_HEAD.index("No chance"), ", ".join(cwe_cache[cwe]["capec_no_chance"]))
+                        rowT += 1
 
             print("OK") 
             print(f"Parsed {c} of {l_bdu} BDU's")      
-            rowT += 1
+            
             c += 1
-
-                    
+            
+    workbook.close()                
         
-
-try:
-    workbook.close()
-except:
-    print("Excel file exception")
-    exit(1)
