@@ -62,6 +62,9 @@ def split_string_by_indices(s, indices):
 
 files = glob.glob("*Oval*")
 print(files)
+if len(files) > 1:
+    print("Remove other OVAL files from directory.")
+    exit(0)
 
 
 for file in files:
@@ -76,6 +79,8 @@ for file in files:
 
     cwe_cache = {}
     bdu_cache = []
+    bdu_not_parsed = []
+    cwe_not_parsed = []
 
     workbook = xlsxwriter.Workbook('ParserResult.xlsx')
     worksheet = workbook.add_worksheet("MAIN_TABLE")
@@ -87,7 +92,6 @@ for file in files:
         worksheet.write(rowT, colT + k, word)
     rowT += 1
 
-    print(f"File found: {file}")
 
     file = codecs.open( file, "r", "utf-8" )
     data = file.read()
@@ -108,16 +112,27 @@ for file in files:
 
         for i in bdu:
 
-            print(f"Parsing {i}...", end=" ", flush=True)
 
+            
+
+        
             capec_low, capec_medium, capec_high, capec_no_chance = [], [], [], []
 
             response = requests.get("https://service.securitm.ru/vm/vulnerability/fstec/show/" + i)
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            bdu_desc = soup.find('div', class_='text-justify mb-2').text
+            try:
+                bdu_desc = soup.find('div', class_='text-justify mb-2').text
+            except:
+                print(f"ERROR. Will be shown after.")
+                bdu_not_parsed.append(i)
+                continue
+
 
             if i not in bdu_cache:
+
+                print(f"Parsing {i}...", end=" ", flush=True)
+
                 worksheet_bdu.write(rowBDU, 0, rowT)
                 worksheet_bdu.write(rowBDU, 1, i)
                 worksheet_bdu.write(rowBDU, 2, bdu_desc)
@@ -126,90 +141,110 @@ for file in files:
             
 
 
-            card_body = soup.find('div', class_='card-body border-top-0')
-
-            
-            if card_body:
-                table = card_body.find('table', class_='table table-sm table-striped table-bordered')
+                card_body = soup.find('div', class_='card-body border-top-0')
 
                 
-                if table:
-                    cwe_list = []
-                    rows = table.find_all('tr')  
+                if card_body:
+                    table = card_body.find('table', class_='table table-sm table-striped table-bordered')
 
-                    for row in rows:
-                        cells = row.find_all('td')  
-                        if len(cells) == 2:  
-                            cwe_id = cells[0].text.strip() 
+                    
+                    if table:
+                        cwe_list = []
+                        rows = table.find_all('tr')  
 
-                            cwe_list.append(cwe_id)
+                        for row in rows:
+                            cells = row.find_all('td')  
+                            if len(cells) == 2:  
+                                cwe_id = cells[0].text.strip() 
 
-
-
-
-                                        
-                    for cwe in cwe_list: 
-                        worksheet.write(rowT, TABLE_HEAD.index("№"), c)
-                        worksheet.write(rowT, TABLE_HEAD.index("BDU"), i)
-                        worksheet.write(rowT, TABLE_HEAD.index("CWE"), cwe)
-                        if cwe not in cwe_cache:
-                            print(f"{cwe} is not cached.", end=" ", flush=True)
-                            cwe_cache[cwe] = {}
-                            cwe_cache[cwe]["capec_high"] = list()
-                            cwe_cache[cwe]["capec_medium"] = list()
-                            cwe_cache[cwe]["capec_low"] = list()
-                            cwe_cache[cwe]["capec_no_chance"] = list()
+                                if "CVE" not in cwe_id:
+                                    cwe_list.append(cwe_id)
 
 
-                            cwe_response = requests.get("https://cwe.mitre.org/data/definitions/" + cwe[4:] + ".html")
-                            soup = BeautifulSoup(cwe_response.text, 'html.parser')
+
+                                            
+                        for cwe in cwe_list: 
+                            worksheet.write(rowT, TABLE_HEAD.index("№"), c)
+                            worksheet.write(rowT, TABLE_HEAD.index("BDU"), i)
+                            worksheet.write(rowT, TABLE_HEAD.index("CWE"), cwe)
+                            if cwe not in cwe_cache:
+                                print(f"{cwe} is not cached.", end=" ", flush=True)
+                                cwe_cache[cwe] = {}
+                                cwe_cache[cwe]["capec_high"] = list()
+                                cwe_cache[cwe]["capec_medium"] = list()
+                                cwe_cache[cwe]["capec_low"] = list()
+                                cwe_cache[cwe]["capec_no_chance"] = list()
 
 
-                            cwe_body = soup.find('div', id='Related_Attack_Patterns')
-                            if cwe_body:
-                                cwe_table = cwe_body.find('table', class_='Detail')
-                                if cwe_table:
-                                    cwe_a = cwe_table.find_all('a', href=True)
-                                    for a in cwe_a:
-                                        if a.text not in chain(capec_high, capec_medium, capec_low, capec_no_chance):
-                                            worksheet_capec.write(rowCapec, 0, rowCapec + 1)
-                                            worksheet_capec.write(rowCapec, 1, a.text)
+                                cwe_response = requests.get("https://cwe.mitre.org/data/definitions/" + cwe[4:] + ".html")
+                                soup = BeautifulSoup(cwe_response.text, 'html.parser')
 
-                                            response = requests.get(a['href'])
-                                            soup = BeautifulSoup(response.text, 'html.parser')
 
-                                            capec_desc = soup.find('div', id='Description')
-                                            if capec_desc:
-                                                capec_text = capec_desc.find('div', class_='indent').text
-                                                worksheet_capec.write(rowCapec, 2, capec_text)
-                                                worksheet_capec.write(rowCapec, 3, GoogleTranslator(source='en', target='ru').translate(capec_text))
-                                                
-                                            rowCapec += 1
+                                cwe_body = soup.find('div', id='Related_Attack_Patterns')
+                                cwe_error = soup.find('span', class_='topShadow')
+              
 
-                                        capec_body = soup.find('div', id='Likelihood_Of_Attack')
-                                        if capec_body:
-                                            likehood = capec_body.find('p').text
-                                            if likehood == "High":
-                                                cwe_cache[cwe]["capec_high"].append(a.text)
-                                            elif likehood == "Medium":
-                                                cwe_cache[cwe]["capec_medium"].append(a.text)
+                                if cwe_body:
+                                    cwe_table = cwe_body.find('table', class_='Detail')
+                                    if cwe_table:
+                                        cwe_a = cwe_table.find_all('a', href=True)
+                                        for a in cwe_a:
+                                            if a.text not in chain(capec_high, capec_medium, capec_low, capec_no_chance):
+                                                worksheet_capec.write(rowCapec, 0, rowCapec + 1)
+                                                worksheet_capec.write(rowCapec, 1, a.text)
+
+                                                response = requests.get(a['href'])
+                                                soup = BeautifulSoup(response.text, 'html.parser')
+
+                                                capec_desc = soup.find('div', id='Description')
+                                                if capec_desc:
+                                                    capec_text = capec_desc.find('div', class_='indent').text
+                                                    worksheet_capec.write(rowCapec, 2, capec_text)
+                                                    worksheet_capec.write(rowCapec, 3, GoogleTranslator(source='en', target='ru').translate(capec_text))
+                                                    
+                                                rowCapec += 1
+
+                                            capec_body = soup.find('div', id='Likelihood_Of_Attack')
+                                            if capec_body:
+                                                likehood = capec_body.find('p').text
+                                                if likehood == "High":
+                                                    cwe_cache[cwe]["capec_high"].append(a.text)
+                                                elif likehood == "Medium":
+                                                    cwe_cache[cwe]["capec_medium"].append(a.text)
+                                                else:
+                                                    cwe_cache[cwe]["capec_low"].append(a.text)
                                             else:
-                                                cwe_cache[cwe]["capec_low"].append(a.text)
-                                        else:
-                                            cwe_cache[cwe]["capec_no_chance"].append(a.text)
+                                                cwe_cache[cwe]["capec_no_chance"].append(a.text)
 
+
+                                if cwe_error != None:
+                                    print(f"{cwe} is not parsed. Will be shown after.")
+                                    cwe_not_parsed.append(cwe)                    
+
+                            
+
+                            worksheet.write(rowT, TABLE_HEAD.index("CAPEC High"), ", ".join(cwe_cache[cwe]["capec_high"]))
+                            worksheet.write(rowT, TABLE_HEAD.index("CAPEC Medium"), ", ".join(cwe_cache[cwe]["capec_medium"]))
+                            worksheet.write(rowT, TABLE_HEAD.index("CAPEC Low"), ", ".join(cwe_cache[cwe]["capec_low"]))
+                            worksheet.write(rowT, TABLE_HEAD.index("No chance"), ", ".join(cwe_cache[cwe]["capec_no_chance"]))
+                            rowT += 1
                         
 
-                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC High"), ", ".join(cwe_cache[cwe]["capec_high"]))
-                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC Medium"), ", ".join(cwe_cache[cwe]["capec_medium"]))
-                        worksheet.write(rowT, TABLE_HEAD.index("CAPEC Low"), ", ".join(cwe_cache[cwe]["capec_low"]))
-                        worksheet.write(rowT, TABLE_HEAD.index("No chance"), ", ".join(cwe_cache[cwe]["capec_no_chance"]))
-                        rowT += 1
+                print("OK") 
+                print(f"Parsed {c} BDU | {l_bdu - c} vulnerabilities left")     
+            
+                c += 1
 
-            print("OK") 
-            print(f"Parsed {c} of {l_bdu} BDU's")      
-            
-            c += 1
-            
+
+    if len(bdu_not_parsed) > 0:
+        print("\nNot parsed BDU's: ")
+        for i in bdu_not_parsed:
+            print(i, end="   ")
+
+    if len(cwe_not_parsed) > 0:
+        print("\nNot parsed CWE's: ")
+        for i in cwe_not_parsed:
+            print(i, end="   ")
+
     workbook.close()                
         
